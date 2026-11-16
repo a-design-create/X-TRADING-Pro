@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#080A09">
+  <meta name="description" content="X TRADING PRO - Premium Virtual Trading Simulator">
+  <title>X TRADING PRO</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <header class="topbar">
+    <a href="#" class="brand">
+      <span class="brand-icon">X</span>
+      <span>X TRADING <b>PRO</b></span>
+    </a>
+    <button id="themeToggle" class="icon-btn" aria-label="Toggle theme">☼</button>
+  </header>
+
+  <main class="container">
+
+    <section class="welcome">
+      <p class="eyebrow">VIRTUAL TRADING PLATFORM</p>
+      <h1>Trade Smarter.<br><span>Learn Better.</span></h1>
+      <p>Practice the markets with virtual money.</p>
+    </section>
+
+    <section class="balance-card">
+      <p>AVAILABLE VIRTUAL BALANCE</p>
+      <h2 id="balance">₹1,00,000.00</h2>
+      <span class="demo-label">DEMO ACCOUNT • NO REAL MONEY</span>
+    </section>
+
+    <section class="market-section">
+      <div class="section-heading">
+        <h2>Market Overview</h2>
+        <span class="live-label">● DEMO</span>
+      </div>
+
+      <div class="market-grid">
+        <article class="market-card">
+          <p>NIFTY 50</p>
+          <h3 id="nifty">24,500.00</h3>
+          <span class="profit">+0.45%</span>
+        </article>
+
+        <article class="market-card">
+          <p>SENSEX</p>
+          <h3 id="sensex">80,500.00</h3>
+          <span class="profit">+0.32%</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="stocks-section">
+      <div class="section-heading">
+        <h2>Popular Stocks</h2>
+        <span class="muted">Demo quotes</span>
+      </div>
+      <div id="stockList" class="stock-list">
+        <p class="muted">Loading demo stocks...</p>
+      </div>
+    </section>
+
+    <section class="notice">
+      <strong>Practice Mode</strong>
+      <p>This app uses virtual money only. No real trades or payments.</p>
+    </section>
+
+  </main>
+
+  <nav class="bottom-nav">
+    <a class="active" href="#home">⌂<span>Home</span></a>
+    <a href="#markets">▥<span>Markets</span></a>
+    <a href="#trade">⇄<span>Trade</span></a>
+    <a href="#portfolio">▤<span>Portfolio</span></a>
+    <a href="#more">☰<span>More</span></a>
+  </nav>
+
+  <script src="script.js"></script>
+</body>
+  </html>
+        
