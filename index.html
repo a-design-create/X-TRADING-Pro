@@ -169,4 +169,252 @@ function firebaseConfigured(){return FIREBASE_CONFIG.apiKey && !FIREBASE_CONFIG.
 function fbStatus(message){const el=document.getElementById('fbStatus');if(el)el.textContent=message}
 function initFirebase(){
   if(!firebaseConfigured()){fbStatus('Setup pending: add your Firebase web config in script.js');return;}
-  if(!window.fire
+  if(!window.firebase){fbStatus('Firebase SDK could not load. Check internet connection.');return;}
+  try{if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);fbAuth=firebase.auth();fbDb=firebase.firestore();fbReady=true;
+    fbAuth.onAuthStateChanged(async user=>{fbUser=user||null;if(user){fbStatus('Signed in: '+(user.email||user.displayName||'Firebase user'));await loadCloudData();LS.s('xk_user',JSON.stringify({name:user.displayName||((user.email||'X Trader').split('@')[0]),ph:'',email:user.email||'',accountType:'firebase'}));LS.s('xk_sess','1');if(document.getElementById('login')&&!document.getElementById('login').classList.contains('hide'))enter();}else fbStatus('Not signed in to Firebase');});fbAuth.getRedirectResult().catch(e=>{console.warn('Google redirect:',e);fbStatus('Google sign-in: '+friendlyFbError(e));});
+  }catch(e){console.error('Firebase init:',e);fbStatus('Firebase setup error: '+e.message)}
+}
+async function firebaseEmailAuth(){
+  if(!fbReady)return toast('Add your Firebase config first');
+  const email=document.getElementById('fbEmail').value.trim(),password=document.getElementById('fbPassword').value;
+  if(!email||password.length<6)return toast('Enter a valid email and a password of at least 6 characters');
+  try{let cred;try{cred=await fbAuth.signInWithEmailAndPassword(email,password)}catch(e){if(e.code==='auth/user-not-found'||e.code==='auth/invalid-credential')cred=await fbAuth.createUserWithEmailAndPassword(email,password);else throw e;}
+    fbUser=cred.user;const displayName=(email.split('@')[0]||'X Trader');await fbUser.updateProfile({displayName});await ensureCloudProfile();await loadCloudData();fbStatus('Firebase connected · '+email);toast('Firebase account connected');
+    LS.s('xk_user',JSON.stringify({name:displayName,ph:'',email,accountType:'firebase'}));LS.s('xk_sess','1');enter();
+  }catch(e){console.error(e);toast('Firebase login: '+friendlyFbError(e));}
+}
+async function firebaseGoogleAuth(){
+  if(!fbReady)return toast('Add your Firebase config first');
+  try{const provider=new firebase.auth.GoogleAuthProvider();provider.setCustomParameters({prompt:'select_account'});if(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent)){await fbAuth.signInWithRedirect(provider);return;}const cred=await fbAuth.signInWithPopup(provider);fbUser=cred.user;await ensureCloudProfile();await loadCloudData();LS.s('xk_user',JSON.stringify({name:fbUser.displayName||'X Trader',ph:'',email:fbUser.email||'',accountType:'firebase'}));LS.s('xk_sess','1');fbStatus('Google connected · '+(fbUser.email||''));enter();}
+  catch(e){console.error(e);if(e.code==='auth/popup-blocked'||e.code==='auth/operation-not-supported-in-this-environment')toast('Google popup blocked. Use deployed HTTPS site and enable Google provider.');else toast('Google sign-in: '+friendlyFbError(e));}
+}
+function friendlyFbError(e){return ({'auth/unauthorized-domain':'Add this website domain in Firebase Authentication > Settings > Authorized domains.','auth/operation-not-allowed':'Enable Email/Password or Google provider in Firebase Authentication.','auth/weak-password':'Password must be at least 6 characters.','auth/email-already-in-use':'This email already has an account. Sign in with its password.','auth/invalid-credential':'Email or password is incorrect.'})[e.code]||e.message||'Unknown Firebase error'}
+async function ensureCloudProfile(){if(!fbUser||!fbDb)return;const ref=fbDb.collection('users').doc(fbUser.uid);const snap=await ref.get();if(!snap.exists)await ref.set({uid:fbUser.uid,email:fbUser.email||'',displayName:fbUser.displayName||'',createdAt:firebase.firestore.FieldValue.serverTimestamp(),updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});}
+async function loadCloudData(){if(!fbUser||!fbDb)return;try{const snap=await fbDb.collection('users').doc(fbUser.uid).collection('appData').doc('state').get();if(!snap.exists){st.funds=100000;st.pos={};st.orders=[];st.real=0;st.fav={};st.al=[];await ensureCloudProfile();await fbDb.collection('users').doc(fbUser.uid).collection('appData').doc('state').set({funds:st.funds,pos:st.pos,orders:[],real:0,fav:{},al:[],updatedAt:firebase.firestore.FieldValue.serverTimestamp()});LS.s('xk_data',JSON.stringify({funds:st.funds,pos:st.pos,orders:[],real:0,fav:{},al:[]}));fbStatus('Firebase connected · new cloud profile created');return;}const d=snap.data()||{};if(d.funds!=null)st.funds=Number(d.funds);if(d.pos)st.pos=d.pos;if(Array.isArray(d.orders))st.orders=d.orders;if(Number.isFinite(Number(d.real)))st.real=Number(d.real);if(d.fav)st.fav=d.fav;if(Array.isArray(d.al))st.al=d.al;oid=Math.max(0,...st.orders.map(o=>o.id||0));LS.s('xk_data',JSON.stringify({funds:st.funds,pos:st.pos,orders:st.orders,real:st.real,fav:st.fav,al:st.al}));fbStatus('Cloud data synced');if(document.getElementById('login').classList.contains('hide'))render();}catch(e){console.error('Cloud load:',e);fbStatus('Signed in, but cloud data could not load: '+e.message)}}
+function queueCloudSave(){if(!fbUser||!fbDb)return;clearTimeout(fbSaveTimer);fbSaveTimer=setTimeout(async()=>{try{await fbDb.collection('users').doc(fbUser.uid).collection('appData').doc('state').set({funds:st.funds,pos:st.pos,orders:st.orders.slice(0,100),real:st.real,fav:st.fav,al:st.al,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});fbStatus('Cloud sync saved');}catch(e){console.error('Cloud save:',e);fbStatus('Cloud sync error: '+e.message)}},900)}
+async function flushCloudSave(){
+  if(!fbUser||!fbDb)return;
+  clearTimeout(fbSaveTimer);
+  try{await fbDb.collection('users').doc(fbUser.uid).collection('appData').doc('state').set({funds:st.funds,pos:st.pos,orders:st.orders.slice(0,100),real:st.real,fav:st.fav,al:st.al,updatedAt:firebase.firestore.FieldValue.serverTimestamp()},{merge:true});fbStatus('Cloud sync saved');}
+  catch(e){console.error('Final cloud save:',e);fbStatus('Cloud sync error: '+e.message);throw e}
+}
+function firebaseLogout(){if(fbAuth&&fbUser)fbAuth.signOut().catch(console.error)}
+
+let marketApiOnline=false, marketBusy=false, quoteCursor=0, lastLiveAt=0;
+const liveQueue=['RELIANCE','TCS','HDFCBANK','INFY','ICICIBANK','SBIN','ITC','TATAMOTORS','BHARTIARTL','ADANIENT','WIPRO','ZOMATO','LT','MARUTI','SUNPHARMA','AXISBANK','KOTAKBANK','HINDUNILVR','ASIANPAINT','NTPC','ONGC','BAJFINANCE'];
+const apiSymbol=s=>s+':NSE';
+function statusMarket(mode,msg){const el=document.getElementById('marketStatus'),tx=document.getElementById('marketStatusText');if(!el||!tx)return;el.classList.toggle('ok',mode==='ok');el.classList.toggle('bad',mode==='bad');tx.textContent=msg;}
+async function apiGet(path){const r=await fetch(API_BASE+path,{method:'GET',headers:{'Accept':'application/json'},cache:'no-store'});let j;try{j=await r.json()}catch(e){throw new Error('Worker returned invalid JSON')}if(!r.ok||j.error||j.success===false||j.status==='error')throw new Error(j.error||j.message||('API HTTP '+r.status));return j;}
+function unwrapQuote(j){let d=j.data||j.quote||j.result||j; if(Array.isArray(d))d=d[0];return d||{};}
+function applyLiveQuote(symbol,j){const x=find(symbol);if(!x)return false;const d=unwrapQuote(j);const price=Number(d.close_inr??d.price_inr??d.close??d.price??d.last??d.last_price??d.ltp);const prev=Number(d.previous_close_inr??d.previous_close??d.prev_close??d.previousClose??x.prev);if(!Number.isFinite(price)||price<=0)throw new Error('Quote response has no valid price');x.p=price;if(Number.isFinite(prev)&&prev>0)x.prev=prev;x.live=true;x.liveAt=Date.now();x.source=d.source||j.source||'Cloudflare Worker · Twelve Data';lastLiveAt=x.liveAt;return true;}
+async function checkMarketApi(){try{const j=await apiGet('/api/health');marketApiOnline=true;statusMarket('ok','Worker reachable · verifying individual quotes');return j}catch(e){marketApiOnline=false;statusMarket('bad','DEMO snapshot only · no live quote connection');console.warn('Market API health:',e.message);return null}}
+async function refreshOneQuote(){if(marketBusy)return;marketBusy=true;try{let symbol=liveQueue[quoteCursor%liveQueue.length];const j=await apiGet('/api/quote?symbol='+encodeURIComponent(apiSymbol(symbol)));applyLiveQuote(symbol,j);marketApiOnline=true;statusMarket('ok','Live quote · '+symbol+' (NSE)');fill();saveD();chkAl();const upd=document.getElementById('marketUpdated');if(upd)upd.textContent='Updated '+new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});if(st.cur===symbol){hdrD();draw();depth()}if(st.tab==='watch'||st.tab==='port')render();}catch(e){marketApiOnline=false;statusMarket('bad','Quote failed · last/demo value retained, not live');console.warn('Quote refresh:',e.message)}finally{quoteCursor++;marketBusy=false}}
+async function startMarketData(){await checkMarketApi();await refreshOneQuote();}
+async function loadDailySeries(symbol){try{const j=await apiGet('/api/series?symbol='+encodeURIComponent(apiSymbol(symbol))+'&interval=1day');let d=j.data||j;let vals=d.values||d.candles||d.data;if(!Array.isArray(vals)||!vals.length)return false;const arr=vals.slice().reverse().map((v,i)=>{const o=Number(v.open??v.o),h=Number(v.high??v.h),l=Number(v.low??v.l),c=Number(v.close??v.c);if(![o,h,l,c].every(n=>Number.isFinite(n)&&n>0))return null;const date=String(v.datetime||v.date||v.time||'');const dt=new Date(date);return{o,h,l,c,v:Number(v.volume||v.v||0),j:i,m:555,t:Number.isNaN(dt.getTime())?date:hm(dt.getHours()*60+dt.getMinutes()),ds:Number.isNaN(dt.getTime())?date:fd(dt),nd:false}}).filter(Boolean);if(arr.length>5){cd[symbol+'1D']=arr;return true}return false}catch(e){console.warn('Daily history:',e.message);return false}}
+
+const find=s=>S.find(x=>x.s===s);
+const cls=v=>v>=0?'up':'dn';
+const chg=x=>{const d=x.p-x.prev;return`${d>=0?'+':''}${d.toFixed(2)} (${(d/x.prev*100).toFixed(2)}%)`};
+// candles
+const TF={'1m':.0012,'5m':.0025,'15m':.004,'1D':.012};const cd={};
+const rn=()=>{let u=0;while(!u)u=Math.random();return Math.sqrt(-2*Math.log(u))*Math.cos(6.2831853*Math.random())};
+const BV={'1m':.0006,'5m':.0013,'15m':.0022,'1D':.011},ST={'1m':1,'5m':5,'15m':15,'1D':375};
+const MN=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+const fd=d=>d.getDate()+' '+MN[d.getMonth()],hm=m=>String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
+const fv=v=>v>=1e7?(v/1e7).toFixed(2)+'Cr':v>=1e5?(v/1e5).toFixed(2)+'L':v>=1e3?(v/1e3).toFixed(1)+'K':''+v;
+function td(k){const d=new Date();let c=0;while(c<k){d.setDate(d.getDate()-1);if(d.getDay()%6)c++}while(d.getDay()%6===0)d.setDate(d.getDate()-1);return d}
+function gen(x,tf){const N=220,b=BV[tf],step=ST[tf],pd=Math.floor(375/step),dl=tf==='1D',ld=Math.floor((N-1)/pd);let a=[],p=100,sg=b,tr=0,r=0;
+for(let j=0;j<N;j++){const di=Math.floor(j/pd),pos=j%pd,nd=!dl&&pos===0&&j>0;
+sg=Math.min(3*b,Math.max(.45*b,Math.sqrt(.04*b*b+.14*r*r+.82*sg*sg)));tr=.96*tr+.04*rn()*b*.9;r=tr+sg*rn();
+const gap=dl?rn()*b*.25:(nd?rn()*b*2:rn()*b*.06),o=p*(1+gap),c=o*(1+r);let hi=Math.max(o,c),lo=Math.min(o,c);
+for(let s=1;s<=5;s++){const q=o+(c-o)*s/5+o*sg*.5*rn()*Math.sqrt((5-s)/5);hi=Math.max(hi,q);lo=Math.min(lo,q)}
+hi+=o*sg*.3*Math.abs(rn())*Math.random();lo-=o*sg*.3*Math.abs(rn())*Math.random();
+const uf=dl?1:1+1.3*Math.pow(Math.abs(pos/pd-.5)*2,2),v=Math.round(1e5*uf*(.6+Math.abs(r)/sg*.5)*Math.exp(.35*rn())*(dl?pd*.9:1)*(step===1?.25:step===15?2.5:1));
+const dt=dl?td(N-1-j):td(ld-di);a.push({o,h:hi,l:lo,c,v,j,m:555+pos*step,t:dl?fd(dt):hm(555+pos*step),ds:fd(dt),nd});p=c}
+const k=x.p/a[N-1].c,R=v=>Math.round(v*k*20)/20;a.forEach(c=>{c.o=R(c.o);c.c=R(c.c);c.h=Math.max(R(c.h),c.o,c.c);c.l=Math.min(R(c.l),c.o,c.c)});cd[x.s+tf]=a;return a}
+const cds=()=>cd[st.cur+st.tf]||gen(find(st.cur),st.tf);
+// views
+const ic={watch:'<path d="M12 17.3l-5.4 3 1-6L3.2 10l6-.9L12 3.6l2.7 5.5 6 .9-4.4 4.3 1 6z"/>',orders:'<path d="M8 6h12M8 12h12M8 18h12M4 6h.01M4 12h.01M4 18h.01"/>',port:'<path d="M3 7h18v13H3zM8 7V4h8v3"/>',funds:'<path d="M3 6h18v13H3zM3 10h18M16 15h2"/>',explore:'<circle cx="12" cy="12" r="9"/><path d="M15 9l-2 5-5 1 2-5z"/>'};
+const names={watch:'Watchlist',orders:'Orders',port:'Portfolio',funds:'Funds',explore:'Explore'};
+function nav(){document.getElementById('nav').innerHTML=Object.keys(ic).map(k=>`<button class="${st.tab===k?'on':''}" onclick="st.tab='${k}';render()"><svg viewBox="0 0 24 24">${ic[k]}</svg>${names[k]}</button>`).join('')}
+function row(x,sub){return`<div class="row" onclick="openD('${x.s}')"><div><div class="n"><span onclick="event.stopPropagation();fav('${x.s}')" style="color:var(--ac);margin-right:6px">${st.fav[x.s]?'★':'☆'}</span>${x.s}${x.live?'<i class="lv" title="Live quote"></i>':''}</div><div class="s">${sub||'NSE · '+x.n}</div></div><div class="r"><div class="p ${cls(x.p-x.prev)}">${inr(x.p)}</div><div class="c ${cls(x.p-x.prev)}">${chg(x)}</div></div></div>`}
+function wlist(){let f=S.filter(x=>(x.s+x.n).toLowerCase().includes(st.q.toLowerCase()));if(st.wl==='f')f=f.filter(x=>st.fav[x.s]);else if(st.wl!=='all')f=f.sort((a,b)=>(b.p/b.prev-a.p/a.prev)*(st.wl==='g'?1:-1));document.getElementById('wl').innerHTML=`<div class='tf' style='padding-top:10px'>${[['all','All'],['f','★ Favourites'],['g','Top gainers'],['l','Top losers']].map(([k,l])=>`<button class='${st.wl===k?'on':''}' onclick="st.wl='${k}';render()">${l}</button>`).join('')}</div><div class='sec'>My watchlist (${f.length})</div>`+(f.map(x=>row(x)).join('')||'<div class="empty">No stock matches. Try another name.</div>')}
+const pnl=v=>`<span class="${cls(v)}">${v>=0?'+':''}${inr(v)}</span>`;
+function render(){nav();const m=document.getElementById('main');let h='';
+if(st.tab==='watch'){if(document.getElementById('q')){wlist();return}m.innerHTML=`<input class="search" id="q" placeholder="Search stocks, e.g. TCS" value="${esc(st.q)}" oninput="st.q=this.value;wlist()"><div id="wl"></div>`;wlist();return}
+if(st.tab==='orders'){const ol=st.orders.filter(o=>st.of==='all'||(st.of==='p'?o.pend:!o.pend));h=`<div class='tf' style='padding-top:12px'>${[['all','All'],['p','Pending'],['e','Executed']].map(([k,l])=>`<button class='${st.of===k?'on':''}' onclick="st.of='${k}';render()">${l}</button>`).join('')}</div>`+(ol.length?ol.map(o=>`<div class="row" style="cursor:default"><div><div class="n"><span class="${o.side==='BUY'?'up':'dn'}">${o.side}</span> ${o.s}</div><div class="s">${o.t} · ${o.type} · ${o.prod}</div></div><div class="r"><div class="p">${o.q} × ${inr(o.px)}</div>${o.pend?`<div class='c' style='color:var(--ac)'>Pending <a onclick='cancelO(${o.id})' style='color:var(--dn);cursor:pointer'>Cancel</a></div>`:o.rej?`<div class='c dn'>Rejected: ${esc(o.reason||'order validation failed')}</div>`:`<div class='c up'>Executed</div>`}</div></div>`).join(''):'<div class="empty">No orders here.<br>Open a stock and tap Buy to place one.</div>')}
+if(st.tab==='port'){const hs=Object.entries(st.pos).filter(([,v])=>v.q>0);let inv=0,cur=0;hs.forEach(([s,v])=>{inv+=v.q*v.avg;cur+=v.q*find(s).p});
+const pl=cur-inv;h=`<div class="card"><div class="lbl">Current value</div><div class="big">${inr(cur)}</div><div class="lbl" style="margin-top:6px">Invested ${inr(inv)}</div><div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:14px"><div class="lbl">Unrealised P&L<div style="font-size:14px;font-weight:700;margin-top:3px">${pnl(pl)}</div><div class="${cls(pl)}" style="font-size:11px">${inv?(pl/inv*100).toFixed(2):'0.00'}%</div></div><div class="lbl">Realised P&L<div style="font-size:14px;font-weight:700;margin-top:3px">${pnl(st.real)}</div></div><div class="lbl">Total P&L<div style="font-size:14px;font-weight:700;margin-top:3px">${pnl(pl+st.real)}</div></div></div></div>${alloc(hs)}`+(hs.length?hs.map(([s,v])=>{const x=find(s),p=(x.p-v.avg)*v.q;return`<div class="row" onclick="openD('${s}')"><div><div class="n">${s}</div><div class="s">${v.q} qty · Avg ${inr(v.avg)}</div></div><div class="r"><div class="p">${inr(x.p*Math.abs(v.q))}</div><div class='c ${cls(p)}'>${p>=0?'+':''}${inr(p)} (${(p/(Math.abs(v.q)*v.avg)*100).toFixed(2)}%)</div><span class='chip' onclick="event.stopPropagation();exitP('${s}')">Exit</span></div></div>`}).join(''):'<div class="empty">No holdings yet.<br>Buy your first stock from the watchlist.</div>')}
+if(st.tab==='funds'){h=`<div class="card"><div class="lbl">Available virtual cash</div><div class="big">${inr(st.funds)}</div><div style='display:flex;gap:10px;margin-top:14px'><button class='btn pri' onclick="st.funds+=10000;saveD();toast('₹10,000.00 added');render()">Add funds</button><button class='btn' style='background:var(--bg);color:var(--ac)' onclick="secure(()=>{if(st.funds<5000)return toast('Not enough balance');st.funds-=5000;saveD();toast('₹5,000.00 withdrawn');render()})">Withdraw ₹5,000</button></div></div><div class="card"><div class="lbl">Account</div><div style="font-weight:600;margin-top:4px">X TRADING · Demo trading</div><div class="lbl" style="margin-top:6px">Prices are simulated. No real money is used.</div></div>`}
+if(st.tab==='explore'){const SC={Banks:['HDFCBANK','ICICIBANK','SBIN','AXISBANK','KOTAKBANK','BAJFINANCE'],IT:['TCS','INFY','WIPRO'],Energy:['RELIANCE','ONGC','NTPC'],Auto:['TATAMOTORS','MARUTI'],FMCG:['ITC','HINDUNILVR','ASIANPAINT'],Pharma:['SUNPHARMA'],Infra:['LT','ADANIENT','BHARTIARTL','ZOMATO']},sp=I[0].v,at=Math.round(sp/50)*50,ks=[-3,-2,-1,0,1,2,3].map(i=>at+i*50),tv=K=>85*Math.exp(-Math.abs(K-sp)/130);
+h=`<div class='sec'>Sector heatmap</div><div style='display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:0 16px'>${Object.entries(SC).map(([k,a])=>{const c=a.reduce((s,x)=>s+(find(x).p/find(x).prev-1)*100,0)/a.length;return`<div style='border-radius:10px;padding:12px 6px;text-align:center;color:#fff;background:${c>=0?'#0a9d6e':'#e0443e'};opacity:${Math.min(1,.55+Math.abs(c)/3)}'><b style='font-size:13px'>${k}</b><div style='font-size:12px'>${c>=0?'+':''}${c.toFixed(2)}%</div></div>`}).join('')}</div>
+<div class='sec'>NIFTY options chain · simulated</div><div class='card' style='padding:12px 0'><div style='display:grid;grid-template-columns:1fr 1fr 1fr;text-align:center;font-size:13px;row-gap:9px'><b class='lbl'>Call LTP</b><b class='lbl'>Strike</b><b class='lbl'>Put LTP</b>${ks.map(K=>`<span class='up'>${(Math.max(sp-K,0)+tv(K)).toFixed(2)}</span><b style='${K===at?'background:var(--bg)':''}'>${K}</b><span class='dn'>${(Math.max(K-sp,0)+tv(K)).toFixed(2)}</span>`).join('')}</div></div>
+<div class='sec'>Upcoming IPOs (demo list)</div>${IPOS.map((p,i)=>`<div class='row' style='cursor:default'><div><div class='n'>${p[0]}</div><div class='s'>Price band ${p[1]} · ${p[2]}</div></div><span class='chip' onclick='ipo(${i})'>Apply</span></div>`).join('')}
+<div class='sec'>Market news (demo headlines)</div>${NEWS.map(n=>`<div class='row' style='cursor:default;display:block'><div style='font-size:14px;font-weight:500'>${n[0]}</div><div class='s'>${n[1]}</div></div>`).join('')}`}
+m.innerHTML=h}
+function tickHdr(){[0,1].forEach(i=>{const x=I[i];document.getElementById('i'+i).textContent=x.v.toLocaleString('en-IN',{minimumFractionDigits:2,maximumFractionDigits:2});const e=document.getElementById('c'+i),d=x.v-x.prev;e.className='';e.style.color=d>=0?'#8FE3A5':'#FF4D5A';e.textContent=`${d>=0?'+':''}${(d/x.prev*100).toFixed(2)}%`})}
+// detail + chart
+function openD(s){st.cur=s;const qi=liveQueue.indexOf(s);if(qi>=0)quoteCursor=qi;document.getElementById('det').classList.add('show');document.getElementById('tf').innerHTML=Object.keys(TF).map(k=>`<button class="${k===st.tf?'on':''}" onclick="st.tf='${k}';openD('${s}')">${k}</button>`).join('');const x=find(s);document.getElementById('dn').textContent=x.s;document.getElementById('ds').textContent='NSE · '+x.n;sel=-1;st.pan=0;cds();hdrD();tools();depth();draw();if(st.tf==='1D')loadDailySeries(s).then(ok=>{if(ok&&st.cur===s){draw();depth();tools();const d=document.getElementById('ds');if(d)d.textContent='NSE · '+x.n+' · LIVE DAILY HISTORY'}})}
+function closeD(){document.getElementById('det').classList.remove('show');st.cur=null;st.co=0;render()}
+function hdrD(){const x=find(st.cur);document.getElementById('dp').textContent=inr(x.p);const c=document.getElementById('dc');c.textContent=chg(x);c.className='c '+cls(x.p-x.prev)}
+let sel=-1;
+let selY=0;const VIS=60,PAD=58;let oid=0;
+const nowT=()=>new Date().toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit'});
+function ha(A){let p;return A.map((c,i)=>{const cc=(c.o+c.h+c.l+c.c)/4,o=i?(p.o+p.c)/2:(c.o+c.c)/2;p={o,c:cc};return{...c,o,c:cc,h:Math.max(c.h,o,cc),l:Math.min(c.l,o,cc)}})}
+function rsi(A){let g=0,l=0;return A.map((c,i)=>{if(!i)return null;const d=c.c-A[i-1].c;if(i<=14){g+=Math.max(d,0)/14;l+=Math.max(-d,0)/14;return i<14?null:100-100/(1+g/(l||1e-9))}g=(g*13+Math.max(d,0))/14;l=(l*13+Math.max(-d,0))/14;return 100-100/(1+g/(l||1e-9))})}
+function tools(){document.getElementById('tl').innerHTML=[['candle','Candle'],['ha','Heikin Ashi'],['line','Line'],['area','Area']].map(([k,l])=>`<button class='${st.ct===k?'on':''}' onclick="st.ct='${k}';tools();draw()">${l}</button>`).join('')+['ma','ema','bb','rsi'].map(k=>`<button class='${st[k]?'on':''}' onclick="st['${k}']^=1;tools();draw()">${k.toUpperCase()}</button>`).join('')+`<button onclick='alertP()'>🔔 Alert</button><button onclick='zoom(10)'>−</button><button onclick='zoom(-10)'>＋</button>`;let note=document.getElementById('chartDataNote');if(!note){note=document.createElement('div');note.id='chartDataNote';note.style.cssText='padding:0 16px 8px;font-size:10px;color:var(--mu)';document.getElementById('tl').after(note)}note.textContent=st.tf==='1D'?(cd[st.cur+'1D']?'Provider daily candles · check timestamp/source':'DEMO candles · provider daily history not loaded'):'DEMO candles · not historical exchange data (intraday feed not connected)'}
+function zoom(d){st.vis=Math.max(20,Math.min(150,st.vis+d));st.pan=Math.min(st.pan,cds().length-st.vis);draw()}
+function depth(){const x=find(st.cur),A=cds().slice(-75),hi=Math.max(...A.map(c=>c.h)),lo=Math.min(...A.map(c=>c.l)),q=[1,2,3,4,5].map(i=>[i,Math.round(60+Math.random()*900),Math.round(60+Math.random()*900)]),k=[['Open',A[0].o],['Prev close',x.prev],['Day high',hi],['Day low',lo],['52W high',x.p*1.31],['52W low',x.p*.69]];
+document.getElementById('dp2').innerHTML=sig()+`<div class='card' style='display:grid;grid-template-columns:1fr 1fr;gap:10px 16px'>${k.map(([a,v])=>`<div class='lbl'>${a}<div style='color:var(--tx);font-size:14px;font-weight:600'>${inr(v)}</div></div>`).join('')}</div><div class='card' style='font-size:13px'><b>Market depth</b> <span class='lbl'>· simulated for practice</span><div style='display:grid;grid-template-columns:1fr 1fr;gap:4px 16px;margin-top:8px'><span class='lbl'>Bid</span><span class='lbl r'>Offer</span>${q.map(([i,b,s])=>`<span class='up' style='padding:4px 6px;border-radius:6px;background:linear-gradient(90deg,#8FE3A533 ${b/10}%,transparent ${b/10}%)'>${b} · ${(x.p-i*.05).toFixed(2)}</span><span class='dn r' style='padding:4px 6px;border-radius:6px;background:linear-gradient(270deg,#FF4D5A33 ${s/10}%,transparent ${s/10}%)'>${(x.p+i*.05).toFixed(2)} · ${s}</span>`).join('')}</div></div>`}
+function fill(){
+  let changed=false;
+  st.orders.filter(o=>o.pend).forEach(o=>{
+    const x=find(o.s); if(!x)return;
+    let hit=false,execPrice=x.p;
+    if(o.type==='Limit') hit=o.side==='BUY'?x.p<=o.px:x.p>=o.px;
+    else if(o.type==='SL') hit=o.side==='SELL'&&x.p<=o.px; // stop-loss sell becomes a simulated market fill
+    if(!hit)return;
+    const p=st.pos[o.s]||{q:0,avg:0};
+    if(o.side==='BUY'){
+      const cost=o.q*execPrice;
+      if(cost>st.funds){o.pend=0;o.rej=1;o.reason='Insufficient virtual funds';changed=true;return;}
+      const total=p.q+o.q;p.avg=((p.q*p.avg)+cost)/total;p.q=total;st.funds-=cost;
+    }else{
+      if(p.q<o.q){o.pend=0;o.rej=1;o.reason='Insufficient available quantity';changed=true;return;}
+      st.funds+=o.q*execPrice;st.real+=(execPrice-p.avg)*o.q;p.q-=o.q;if(!p.q)p.avg=0;
+    }
+    st.pos[o.s]=p;o.pend=0;o.px=execPrice;o.filledAt=nowT();changed=true;
+    toast(o.side+' '+o.s+' executed at '+inr(execPrice));
+  });
+  if(changed){saveD();render();}
+}
+function cancelO(id){const before=st.orders.length;st.orders=st.orders.filter(o=>o.id!==id);if(st.orders.length!==before){saveD();render();toast('Order cancelled')}}
+function exitP(s){const v=st.pos[s],x=find(s);if(!v||v.q<=0)return;const a=v.q;st.funds+=a*x.p;st.real+=(x.p-v.avg)*a;st.orders.unshift({id:++oid,s,side:'SELL',q:a,px:x.p,type:'Market',prod:'Exit',t:nowT(),pend:0});v.q=0;v.avg=0;saveD();toast('Position closed at '+inr(x.p));render()}
+function theme(){const r=document.documentElement,n=r.dataset.theme==='light'?'dark':'light';r.dataset.theme=n;try{localStorage.setItem('xk_theme',n)}catch(e){}if(st.cur)draw()}
+function draw(){const cv=document.getElementById('cv');if(!st.cur)return;const dpr=devicePixelRatio||1,W=cv.clientWidth,H=cv.clientHeight;cv.width=W*dpr;cv.height=H*dpr;const g=cv.getContext('2d');g.scale(dpr,dpr);
+const cs=getComputedStyle(document.documentElement),V=k=>cs.getPropertyValue(k).trim(),UP=V('--up'),DN=V('--dn'),LN=V('--ln'),MU=V('--mu'),CD=V('--card');
+const VS=st.vis,A=cds(),off=Math.max(0,A.length-VS-st.pan),a=A.slice(off,off+VS),n=a.length,AX=18,VH=44,RH=st.rsi?46:0,T=6,B=H-AX,PB=B-VH-RH-8,w=(W-PAD)/(VS+3),X=i=>(i+.5)*w;
+const ma=a.map((_,i)=>{const k=off+i;if(k<19)return null;let s=0;for(let z=k-19;z<=k;z++)s+=A[z].c;return s/20});
+let hi=Math.max(...a.map(c=>c.h)),lo=Math.min(...a.map(c=>c.l));const pr=(hi-lo)||1;hi+=pr*.06;lo-=pr*.06;const Y=v=>T+(hi-v)/(hi-lo)*(PB-T);
+g.font='10px "DM Sans",sans-serif';g.textBaseline='middle';g.lineWidth=1;
+for(let i=0;i<=4;i++){const v=lo+(hi-lo)*i/4,y=Math.round(Y(v))+.5;g.strokeStyle=LN;g.beginPath();g.moveTo(0,y);g.lineTo(W-PAD,y);g.stroke();g.fillStyle=MU;g.textAlign='left';g.fillText(v.toFixed(2),W-PAD+5,y)}
+g.textAlign='center';
+a.forEach((c,i)=>{const x=Math.round(X(i))+.5;if(c.nd){g.strokeStyle=MU;g.setLineDash([2,3]);g.beginPath();g.moveTo(x,T);g.lineTo(x,B);g.stroke();g.setLineDash([]);g.fillStyle=MU;g.fillText(c.ds,x,B+AX/2)}else if(i%10===5){g.strokeStyle=LN;g.beginPath();g.moveTo(x,T);g.lineTo(x,B);g.stroke();g.fillStyle=MU;g.fillText(c.t,x,B+AX/2)}});
+const mv=Math.max(1,...a.map(c=>c.v));
+const ln=st.ct==='line'||st.ct==='area';(st.ct==='ha'?ha(A).slice(off,off+VS):a).forEach((c,i)=>{const x=X(i),col=c.c>=c.o?UP:DN;g.fillStyle=g.strokeStyle=col;g.globalAlpha=.35;const vv=c.v/mv*VH;g.fillRect(x-w*.36,B-RH-vv,w*.72,vv);g.globalAlpha=1;if(ln)return;g.beginPath();g.moveTo(Math.round(x)+.5,Y(c.h));g.lineTo(Math.round(x)+.5,Y(c.l));g.stroke();g.fillRect(x-w*.36,Y(Math.max(c.o,c.c)),Math.max(1,w*.72),Math.max(1,Math.abs(Y(c.o)-Y(c.c))))});
+if(ln){g.strokeStyle=V('--ac');g.lineWidth=1.8;g.beginPath();a.forEach((c,i)=>i?g.lineTo(X(i),Y(c.c)):g.moveTo(X(i),Y(c.c)));g.stroke();g.lineWidth=1;if(st.ct==='area'){g.lineTo(X(n-1),PB);g.lineTo(X(0),PB);g.closePath();g.globalAlpha=.15;g.fillStyle=V('--ac');g.fill();g.globalAlpha=1}}
+if(st.ma){g.strokeStyle='#B388FF';g.lineWidth=1.3;g.beginPath();let on=false;ma.forEach((v,i)=>{if(v==null)return;on?g.lineTo(X(i),Y(v)):g.moveTo(X(i),Y(v));on=true});g.stroke();g.lineWidth=1}
+if(st.ema){const E=ema(A);g.strokeStyle='#e0508f';g.lineWidth=1.3;g.beginPath();a.forEach((_,i)=>{i?g.lineTo(X(i),Y(E[off+i])):g.moveTo(X(i),Y(E[off+i]))});g.stroke();g.lineWidth=1}
+if(st.bb){const sd=a.map((_,i)=>{const k=off+i;if(k<19)return null;let s=0;for(let z=k-19;z<=k;z++)s+=(A[z].c-ma[i])**2;return Math.sqrt(s/20)});g.save();g.beginPath();g.rect(0,T,W-PAD,PB-T);g.clip();g.strokeStyle='#4a90e2';[1,-1].forEach(m=>{g.beginPath();let o=0;a.forEach((_,i)=>{if(ma[i]==null)return;const y=Y(ma[i]+m*2*sd[i]);o?g.lineTo(X(i),y):g.moveTo(X(i),y);o=1});g.stroke()});g.restore()}
+
+const x0=find(st.cur);if(st.tf!=='1D'&&x0.prev>lo&&x0.prev<hi){const y=Y(x0.prev);g.strokeStyle=MU;g.setLineDash([1,4]);g.beginPath();g.moveTo(0,y);g.lineTo(W-PAD,y);g.stroke();g.setLineDash([]);g.fillStyle=MU;g.textAlign='left';g.fillText('Prev close',4,y-7)}
+const L=a[n-1],yl=Y(L.c),lc=L.c>=L.o?UP:DN;g.strokeStyle=lc;g.setLineDash([4,3]);g.beginPath();g.moveTo(0,yl);g.lineTo(W-PAD,yl);g.stroke();g.setLineDash([]);g.fillStyle=lc;g.fillRect(W-PAD,yl-8,PAD,16);g.fillStyle='#0B0806';g.textAlign='left';g.fillText(L.c.toFixed(2),W-PAD+5,yl);
+if(st.rsi){const R=rsi(A),y0=B-RH+4,y1=B-4,Z=v=>y1-(v/100)*(y1-y0);g.strokeStyle=LN;[30,70].forEach(v=>{g.beginPath();g.moveTo(0,Z(v));g.lineTo(W-PAD,Z(v));g.stroke()});g.strokeStyle='#5aa6c2';g.beginPath();a.forEach((_,i)=>{const v=R[off+i];if(v==null)return;i?g.lineTo(X(i),Z(v)):g.moveTo(X(i),Z(v))});g.stroke();g.fillStyle=MU;g.textAlign='left';g.fillText('RSI 14',4,y0+4)}
+if(sel>=0&&sel<n){const x=Math.round(X(sel))+.5;g.strokeStyle=MU;g.setLineDash([3,3]);g.beginPath();g.moveTo(x,T);g.lineTo(x,B);g.moveTo(0,selY);g.lineTo(W-PAD,selY);g.stroke();g.setLineDash([]);if(selY<PB){g.fillStyle=MU;g.fillRect(W-PAD,selY-8,PAD,16);g.fillStyle=CD;g.textAlign='left';g.fillText((hi-(selY-T)/(PB-T)*(hi-lo)).toFixed(2),W-PAD+5,selY)}g.fillStyle=MU;g.fillRect(x-24,B+1,48,AX-2);g.fillStyle=CD;g.textAlign='center';g.fillText(a[sel].t,x,B+AX/2)}
+const si=sel>=0&&sel<n?sel:n-1,c=a[si];document.getElementById('oh').innerHTML=`<span class="${c.c>=c.o?'up':'dn'}">${c.ds}${c.t!==c.ds?' '+c.t:''} &nbsp;O ${c.o.toFixed(2)} &nbsp;H ${c.h.toFixed(2)} &nbsp;L ${c.l.toFixed(2)} &nbsp;C ${c.c.toFixed(2)} (${((c.c-c.o)/c.o*100).toFixed(2)}%)</span><br>Vol ${fv(c.v)} · <span style="color:#B388FF">MA 20</span> ${ma[si]?ma[si].toFixed(2):'-'}`}
+const cvE=document.getElementById('cv');
+const pick=e=>{const r=cvE.getBoundingClientRect(),n=Math.min(st.vis,cds().length);sel=Math.max(0,Math.min(n-1,Math.floor((e.clientX-r.left)/((r.width-PAD)/(st.vis+3)))));selY=e.clientY-r.top;draw()};
+let dx=null,p0=0,mvd=0;
+cvE.addEventListener('pointerdown',e=>{dx=e.clientX;p0=st.pan;mvd=0;cvE.setPointerCapture(e.pointerId)});
+cvE.addEventListener('pointermove',e=>{if(dx===null){if(e.pointerType==='mouse')pick(e);return}const d=e.clientX-dx;if(Math.abs(d)>6)mvd=1;if(mvd){sel=-1;const w=(cvE.clientWidth-PAD)/(st.vis+3);st.pan=Math.max(0,Math.min(cds().length-st.vis,Math.round(p0+d/w)));draw()}});
+cvE.addEventListener('pointerup',e=>{if(!mvd)pick(e);dx=null});cvE.addEventListener('pointercancel',()=>{dx=null});cvE.addEventListener('mouseleave',()=>{sel=-1;draw()});
+addEventListener('resize',draw);
+// order
+let side='BUY',type='Market',prod='Delivery';
+function openO(sd){side=sd;type='Market';prod='Delivery';sheet()}
+function sheet(){const x=find(st.cur),q=+(document.getElementById('qty')||{value:1}).value||1;document.getElementById('sh').innerHTML=`<div style="display:flex;justify-content:space-between"><b>${side} ${x.s}</b><span>${inr(x.p)}</span></div>
+<div class="seg">${['Delivery','Intraday'].map(k=>`<button class="${prod===k?'on':''}" onclick="prod='${k}';sheet()">${k}</button>`).join('')}</div>
+<div class="lbl">Quantity</div><input class="fld" id="qty" type="number" min="1" step="1" value="${q}" oninput="upd()">
+<div class="seg">${['Market','Limit','SL'].map(k=>`<button class="${type===k?'on':''}" onclick="type='${k}';sheet()">${k}</button>`).join('')}</div>
+${type!=='Market'?`<div class="lbl">${type==='SL'?'Stop-loss trigger price (SELL only)':'Limit price'} (₹)</div><input class="fld" id="lp" type="number" min="0.01" step="0.05" value="${x.p.toFixed(2)}" oninput="upd()">`:''}
+<div class="sum"><span>Estimated value</span><b id="req"></b></div><div class="sum"><span>Available virtual cash</span><span>${inr(st.funds)}</span></div>
+${type==='SL'?`<div class="lbl" style="margin-bottom:10px">A stop-loss is a simulated SELL trigger. It executes at the next available simulated quote and may differ from the trigger price.</div>`:''}
+<button class="btn ${side==='BUY'?'buy':'sell'}" onclick="place()">${side==='BUY'?'Buy':'Sell'} ${x.s}</button>`;document.getElementById('sheet').classList.add('show');upd()}
+function px(){const x=find(st.cur);return type!=='Market'?(+document.getElementById('lp').value||x.p):x.p}
+function upd(){const el=document.getElementById('req');if(el)el.textContent=inr(px()*(+document.getElementById('qty').value||0))}
+function place(){
+ const q=Number(document.getElementById('qty').value),x=find(st.cur),p=px();
+ if(!Number.isSafeInteger(q)||q<1)return toast('Enter a whole quantity of at least 1');
+ if(!Number.isFinite(p)||p<=0)return toast('Enter a valid price');
+ if(type==='SL'&&side!=='SELL')return toast('Stop-loss is available for SELL orders only');
+ const held=st.pos[x.s]?.q||0;
+ const pendingSell=st.orders.filter(o=>o.pend&&o.s===x.s&&o.side==='SELL').reduce((a,o)=>a+o.q,0);
+ if(side==='SELL'&&q>held-pendingSell)return toast('Sell quantity exceeds available holdings');
+ if(type!=='Market'){
+   if(type==='Limit'&&side==='BUY'&&p*q>st.funds)return toast('Limit order value exceeds virtual cash');
+   st.orders.unshift({id:++oid,s:x.s,side,q,px:p,type,prod,t:nowT(),pend:1});saveD();
+   document.getElementById('sheet').classList.remove('show');toast(type+' order queued. It fills only when its condition is met.');render();return;
+ }
+ const amt=q*x.p,o=st.pos[x.s]||{q:0,avg:0};
+ if(side==='BUY'){
+   if(amt>st.funds)return toast('Not enough virtual cash');
+   const nq=o.q+q;o.avg=((o.q*o.avg)+amt)/nq;o.q=nq;st.funds-=amt;
+ }else{
+   if(q>o.q)return toast('You can only sell shares already held. Short selling is disabled.');
+   st.funds+=amt;st.real+=(x.p-o.avg)*q;o.q-=q;if(!o.q)o.avg=0;
+ }
+ st.pos[x.s]=o;st.orders.unshift({id:++oid,s:x.s,side,q,px:x.p,type,prod,t:nowT(),pend:0});
+ saveD();document.getElementById('sheet').classList.remove('show');toast(`${side==='BUY'?'Bought':'Sold'} ${q} ${x.s} at ${inr(x.p)}`);render();
+}
+function toast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2200)}
+// No random price movement: prices change only when a provider quote is received.
+setInterval(()=>{if(st.cur){hdrD();draw();} },5000);
+const mem={},LS={g:k=>{try{const v=localStorage.getItem(k);return v===null?(mem[k]??null):v}catch(e){return mem[k]??null}},s:(k,v)=>{mem[k]=v;try{localStorage.setItem(k,v)}catch(e){}},d:k=>{delete mem[k];try{localStorage.removeItem(k)}catch(e){}}};
+const getU=()=>{try{return JSON.parse(LS.g('xk_user'))}catch(e){return null}},esc=s=>String(s).replace(/[&<>"']/g,c=>'&#'+c.charCodeAt(0)+';');
+const IPOS=[['Nova Renewables','₹285–300','28–30 Oct'],['SwiftKart Ltd','₹112–118','30 Oct–1 Nov'],['Bharat Aerotech','₹540–567','3–5 Nov']],NEWS=[['Nifty holds above key support as banks lead gains','Markets · 10 min ago'],['RBI keeps repo rate unchanged, markets cheer','Economy · 1 hr ago'],['IT stocks slip on weak US demand outlook','Sector · 2 hr ago'],['FIIs turn net buyers after three weeks','Flows · 3 hr ago'],['Crude cools, oil marketing stocks rally','Commodities · 5 hr ago']];
+function ipo(i){toast('IPO bid placed for '+IPOS[i][0]+' (demo)')}
+function fav(s){st.fav[s]=!st.fav[s];saveD();render()}
+function ema(A,n=21){const k=2/(n+1);let e=A[0].c;return A.map(c=>e=c.c*k+e*(1-k))}
+function alloc(hs){const t=hs.reduce((a,[s,v])=>a+Math.abs(v.q)*find(s).p,0);if(!t)return'';const C=['#FF7A1A','#5aa6c2','var(--ac)','#FF4D5A','#9b8cff','#e0508f','#A39588'],w=(s,v)=>Math.abs(v.q)*find(s).p/t*100;return`<div class='card'><div class='lbl'>Allocation</div><div style='display:flex;height:10px;border-radius:5px;overflow:hidden;margin:10px 0'>${hs.map(([s,v],i)=>`<i style='width:${w(s,v)}%;background:${C[i%7]}'></i>`).join('')}</div><div style='display:flex;flex-wrap:wrap;gap:4px 12px;font-size:11px;color:var(--mu)'>${hs.map(([s,v],i)=>`<span><b style='color:${C[i%7]}'>●</b> ${s} ${w(s,v).toFixed(0)}%</span>`).join('')}</div></div>`}
+function sig(){const A=cds(),R=rsi(A).pop(),m=A.slice(-20).reduce((s,c)=>s+c.c,0)/20,p=A[A.length-1].c,sc=(p>m?1:-1)+(R<35?1:R>65?-1:0)+(p>A[A.length-6].c?1:-1),t=sc>=2?['Strong Buy','up']:sc>0?['Buy','up']:sc===0?['Neutral','']:sc>-2?['Sell','dn']:['Strong Sell','dn'];return`<div class='card'><div class='lbl'>Educational indicator example · not a recommendation</div><div class='big ${t[1]}' style='font-size:22px;margin-top:4px'>${t[0]}</div><div class='lbl'>RSI ${R.toFixed(1)} · Price ${p>m?'above':'below'} MA 20</div></div>`}
+function chkAl(){st.al=st.al.filter(a=>{const x=find(a.s),hit=a.up?x.p>=a.px:x.p<=a.px;if(hit)toast('🔔 '+a.s+' reached '+inr(a.px));return!hit})}
+function alertP(){const x=find(st.cur),n=st.al.filter(a=>a.s===x.s).length;document.getElementById('sh').innerHTML=`<b>Price alert · ${x.s}</b><div class='lbl' style='margin:4px 0 8px'>Current ${inr(x.p)} · ${n} active alert${n===1?'':'s'}</div><input class='fld' id='ap' type='number' step='0.05' value='${(x.p*1.01).toFixed(2)}'><button class='btn pri' onclick='setAl()'>Set alert</button>`;document.getElementById('sheet').classList.add('show')}
+function setAl(){const px=+document.getElementById('ap').value;if(!(px>0))return toast('Enter a valid price');if(st.al.length>=100)return toast('Maximum 100 active alerts reached');st.al.push({s:st.cur,px,up:px>find(st.cur).p});saveD();document.getElementById('sheet').classList.remove('show');toast('Alert set at '+inr(px))}
+let pb='',pcb=null;
+async function pinDigest(pin,salt){if(!crypto?.subtle)throw new Error('Secure browser context required for PIN hashing');const data=new TextEncoder().encode(salt+':'+pin);const hash=await crypto.subtle.digest('SHA-256',data);return Array.from(new Uint8Array(hash)).map(b=>b.toString(16).padStart(2,'0')).join('')}
+function newSalt(){const a=crypto.getRandomValues(new Uint8Array(16));return Array.from(a).map(b=>b.toString(16).padStart(2,'0')).join('')}
+async function verifyStoredPin(pin,saltKey='xk_lock_salt',hashKey='xk_lock_hash'){const salt=LS.g(saltKey),hash=LS.g(hashKey);if(!salt||!hash)return false;return(await pinDigest(pin,salt))===hash}
+function pinUI(t,cb,c,f){pb='';pcb=cb;const l=document.getElementById('lock');l.innerHTML=`<div class='mk' style='width:52px;height:52px;font-size:32px;border-radius:14px;margin:0 0 16px'>X</div><div style='font-weight:600;font-size:17px'>${t}</div><div id='dots'><i></i><i></i><i></i><i></i></div><div id='kp'>${[1,2,3,4,5,6,7,8,9,c?'✕':'',0,'⌫'].map(k=>`<button>${k}</button>`).join('')}</div>${f?`<div style='margin-top:26px;font-size:13px;text-decoration:underline;cursor:pointer;opacity:.8' onclick='forgot()'>Reset local app lock</div>`:''}`;document.getElementById('kp').onclick=e=>{const b=e.target.closest('button');if(b)pk(b.textContent)};l.classList.add('show')}
+function dots(){document.querySelectorAll('#dots i').forEach((d,i)=>d.classList.toggle('f',i<pb.length))}
+function lockHide(){document.getElementById('lock').classList.remove('show');pb=''}
+function pk(k){if(k==='⌫')pb=pb.slice(0,-1);else if(k==='✕'){lockHide();return}else if(/^\d$/.test(k)&&pb.length<4)pb+=k;dots();if(pb.length===4){const v=pb;setTimeout(async()=>{try{const r=await pcb(v);if(r===false){pb='';const d=document.getElementById('dots');d.classList.add('sh');setTimeout(()=>{d.classList.remove('sh');dots()},350)}else if(r!=='keep')lockHide()}catch(e){pb='';toast(e.message||'PIN check failed');dots()}},120)}}
+function setPin(){pinUI('Set a new 4-digit PIN',a=>{pinUI('Confirm your PIN',async b=>{if(a!==b){toast('PINs did not match. Try again');setPin();return 'keep'}const salt=newSalt(),hash=await pinDigest(a,salt);LS.s('xk_lock_salt',salt);LS.s('xk_lock_hash',hash);LS.d('xk_lock');toast('Local app lock enabled');if(document.getElementById('sheet').classList.contains('show'))prof()},true);return 'keep'},true)}
+function chgPin(){pinUI('Enter current PIN',async v=>{if(!await verifyStoredPin(v)){toast('Wrong PIN');return false}setPin();return 'keep'},true)}
+function rmPin(){pinUI('Enter current PIN to remove',async v=>{if(!await verifyStoredPin(v)){toast('Wrong PIN');return false}LS.d('xk_lock_hash');LS.d('xk_lock_salt');toast('Local app lock removed');prof()},true)}
+function secure(f){if(!LS.g('xk_lock_hash'))return f();pinUI('Enter PIN to confirm',async v=>{if(!await verifyStoredPin(v)){toast('Wrong PIN');return false}f()},true)}
+function forgot(){LS.d('xk_lock_hash');LS.d('xk_lock_salt');LS.d('xk_lock');LS.d('xk_sess');lockHide();lm='old';lmode();document.getElementById('login').classList.remove('hide');toast('Local app lock reset. Account data was not deleted.')}
+function shut(){document.getElementById('sheet').classList.remove('show')}
+function offerPin(){document.getElementById('sh').innerHTML=`<div style='text-align:center'><div class='mk' style='width:52px;height:52px;font-size:32px;border-radius:14px;margin:0 auto 12px'>X</div><b style='font-size:17px'>Secure your account</b><div class='lbl' style='margin:6px 0 16px'>Optional local app lock. It is not a verified account login or device-level security.</div><button class='btn pri' onclick='shut();setPin()'>Set PIN now</button><div style='margin-top:14px;font-size:13px;color:var(--mu);cursor:pointer' onclick='shut()'>Skip for now</div></div>`;document.getElementById('sheet').classList.add('show')}
+let lm='new';
+function lmode(){const $=i=>document.getElementById(i);$('nm').style.display=lm==='new'?'':'none';$('lbtn').textContent=lm==='new'?'Create account':'Login';$('ltxt').textContent=lm==='new'?'Already registered? Login':'New here? Create account'}
+function toggleL(){lm=lm==='new'?'old':'new';lmode()}
+function spin(m,ms,cb){document.getElementById('bt').textContent=m;document.getElementById('busy').classList.add('show');setTimeout(()=>{document.getElementById('busy').classList.remove('show');cb()},ms)}
+async function login(){const $=i=>document.getElementById(i),n=$('nm').value.trim(),p=$('ph').value,k=$('pin').value;
+if(!/^\d{10}$/.test(p)||!/^\d{4}$/.test(k))return toast('Enter a 10-digit mobile number and a 4-digit PIN');
+if(!crypto?.subtle)return toast('Open this deployed HTTPS site to use secure PIN hashing');
+if(lm==='new'){
+ if(n.length<2)return toast('Enter your name');
+ const salt=newSalt(),pinHash=await pinDigest(k,salt);LS.s('xk_user',JSON.stringify({name:n,ph:p,pinSalt:salt,pinHash,accountType:'local-demo'}));LS.d('xk_data');st.funds=100000;st.pos={};st.orders=[];st.real=0;st.fav={};st.al=[];
+}else{
+ const u=getU();if(!u)return toast('No local demo profile found. Create one first');if(u.ph!==p)return toast('Mobile number does not match');
+ let valid=false;if(u.pinHash&&u.pinSalt)valid=(await pinDigest(k,u.pinSalt))===u.pinHash;else if(u.pin)valid=u.pin===k;
+ if(!valid)return toast('Wrong PIN');
+ if(u.pin){const salt=newSalt();u.pinSalt=salt;u.pinHash=await pinDigest(k,salt);delete u.pin;LS.s('xk_user',JSON.stringify(u));}
+}
+spin(lm==='new'?'Creating local demo profile…':'Logging in…',500,()=>{LS.s('xk_sess','1');const nu=lm==='new';enter();if(nu)setTimeout(offerPin,1200)})}
+function enter(){const u=getU();try{const d=JSON.parse(LS.g('xk_data'));if(d){st.funds=d.funds;st.pos=d.pos;st.orders=d.orders;st.real=d.real||0;st.fav=d.fav||st.fav;st.al=d.al||st.al;oid=Math.max(0,...st.orders.map(o=>o.id||0))}}catch(e){}
+document.getElementById('login').classList.add('hide');document.getElementById('av2').textContent=u.name[0].toUpperCase();st.tab='watch';render();toast('Welcome, '+u.name)}
+function saveD(){if(LS.g('xk_sess')!=='1')return;const data={funds:st.funds,pos:st.pos,real:st.real,orders:st.orders.slice(0,100),fav:st.fav,al:st.al};LS.s('xk_data',JSON.stringify(data));queueCloudSave()}
+function prof(){const u=getU()||{name:'Guest',ph:''};document.getElementById('sh').innerHTML=`<div style='display:flex;gap:12px;align-items:center;margin-bottom:16px'><span class='av' style='background:var(--pri);color:var(--onp);width:46px;height:46px;font-size:18px'>${esc(u.name[0]||'X').toUpperCase()}</span><div><b>${esc(u.name)}</b><div class='lbl'>+91 ${esc(u.ph)} · Local demo profile · mobile number is not verified</div></div></div>${LS.g('xk_lock_hash')?`<div class='lbl' style='margin-bottom:6px'>🔒 Local app lock is ON (not account authentication)</div><div style='display:flex;gap:10px;margin-bottom:10px'><button class='btn pri' onclick='chgPin()'>Change PIN</button><button class='btn' style='background:var(--bg);color:var(--dn)' onclick='rmPin()'>Remove PIN</button></div>`:`<button class='btn pri' style='margin-bottom:10px' onclick='setPin()'>🔒 Set 4-digit security PIN</button>`}<button class='btn' style='margin-bottom:10px;background:var(--bg);color:var(--tx)' onclick='theme()'>Switch light / dark theme</button><button class='btn' style='margin-bottom:10px;background:var(--bg);color:var(--dn)' onclick='resetD()'>Reset demo account</button><button class='btn sell' onclick='logout()'>Logout</button>`;document.getElementById('sheet').classList.add('show')}
+function resetD(){if(!confirm('Reset balance, holdings and orders to the starting state?'))return;secure(()=>{st.funds=100000;st.pos={};st.orders=[];st.real=0;saveD();shut();render();toast('Demo account reset to ₹1,00,000.00')})}
+function logout(){document.getElementById('sheet').classList.remove('show');spin('Logging out…',400,async()=>{saveD();try{await flushCloudSave()}catch(e){}LS.d('xk_sess');firebaseLogout();document.getElementById('det').classList.remove('show');st.cur=null;st.co=0;document.getElementById('pin').value='';lm='old';lmode();document.getElementById('login').classList.remove('hide');toast('You have been logged out')})}
+function boot(){window.__booted=1;if(LS.g('xk_lock'))LS.d('xk_lock');document.getElementById('spl').innerHTML='X TRADING'.split('').map((c,i)=>`<span style='animation-delay:${i*.14}s'>${c===' '?'&nbsp;':c}</span>`).join('');lm=getU()?'old':'new';lmode();setTimeout(()=>{document.getElementById('splash').classList.add('out');if(getU()&&LS.g('xk_sess')==='1'){if(LS.g('xk_lock_hash'))pinUI('Enter local app PIN',async v=>{if(await verifyStoredPin(v)){enter();return}toast('Wrong PIN');return false},false,true);else enter()}},3200)}
+initFirebase();tickHdr();render();boot();
+// Connect to the deployed Cloudflare Worker. Quotes are fetched one at a time to respect provider rate limits.
+startMarketData();setInterval(refreshOneQuote,12000);
+
+// Online-only: show a banner when the internet connection is lost
+(function(){const b=document.createElement('div');b.style.cssText='position:fixed;top:0;left:0;right:0;z-index:70;background:#FF4D5A;color:#fff;text-align:center;padding:calc(8px + env(safe-area-inset-top,0px)) 12px 8px;font-size:13px;font-weight:600;display:none';b.textContent='No internet connection. X TRADING works online only.';document.body.appendChild(b);const f=()=>{b.style.display=navigator.onLine?'none':'block'};addEventListener('online',f);addEventListener('offline',f);f()})();
+// PWA shell: caches the app shell; market data still requires internet
+if('serviceWorker' in navigator){addEventListener('load',()=>{navigator.serviceWorker.register('service-worker.js').catch(()=>{})})}
+</script></body></html>
