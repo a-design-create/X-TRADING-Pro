@@ -1,5 +1,5 @@
-const CACHE = 'x-trading-shell-v2';
-const CORE = ['./', './index.html', './style.css', './script.js', './manifest.json', './icon.svg'];
+const CACHE = 'x-trading-shell-v3';
+const CORE = ['./', './index.html', './manifest.json', './icon.svg'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(CORE)).then(() => self.skipWaiting()));
 });
@@ -15,4 +15,4 @@ self.addEventListener('fetch', event => {
     return response;
   }).catch(() => caches.match(request).then(cached => cached || new Response('Offline: this screen is not cached yet.', {status:503,headers:{'Content-Type':'text/plain'}}))));
 });
-    
+
