@@ -1,0 +1,14 @@
+{
+  "name": "X TRADING Simulator",
+  "short_name": "X TRADING",
+  "description": "Educational paper-trading simulator with virtual money only.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0B0806",
+  "theme_color": "#0B0806",
+  "icons": [
+    {"src":"./icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}
+  ]
+}
