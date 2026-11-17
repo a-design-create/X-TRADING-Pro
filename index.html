@@ -7,6 +7,7 @@
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon.svg">
+<script>(function(){function s(m){var d=document.getElementById('xerr');if(!d){d=document.createElement('div');d.id='xerr';d.style.cssText='position:fixed;left:0;right:0;top:0;z-index:99999;background:#b00020;color:#fff;font:12px/1.4 sans-serif;padding:8px 10px;word-break:break-word';(document.body||document.documentElement).appendChild(d)}d.textContent='Error: '+m}addEventListener('error',function(e){s((e.message||'script error')+' (line '+(e.lineno||'?')+')')});addEventListener('unhandledrejection',function(e){s(String(e.reason&&e.reason.message||e.reason))});setTimeout(function(){if(!window.__booted){s('App script did not start. Re-upload index.html fully.');var sp=document.getElementById('splash');if(sp)sp.classList.add('out')}},7000)})()</script>
 <script>try{document.documentElement.dataset.theme=localStorage.getItem('xk_theme')||'dark'}catch(e){document.documentElement.dataset.theme='dark'}</script>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>:root{--pri:#FF7A1A;--ac:#FF7A1A;--glow:#FF7A1A55;--hd:#0B0806;--onp:#0B0806;--onb:#0B0806;--bg:#0B0806;--card:#15100C;--s2:#241B14;--tx:#FBF3EA;--mu:#A39588;--ln:#33271C;--up:#8FE3A5;--dn:#FF4D5A;color-scheme:dark}
@@ -170,8 +171,4 @@ function initFirebase(){
   if(!firebaseConfigured()){fbStatus('Setup pending: add your Firebase web config in script.js');return;}
   if(!window.firebase){fbStatus('Firebase SDK could not load. Check internet connection.');return;}
   try{if(!firebase.apps.length)firebase.initializeApp(FIREBASE_CONFIG);fbAuth=firebase.auth();fbDb=firebase.firestore();fbReady=true;
-    fbAuth.onAuthStateChanged(async user=>{fbUser=user||null;if(user){fbStatus('Signed in: '+(user.email||user.displayName||'Firebase user'));await loadCloudData();LS.s('xk_user',JSON.stringify({name:user.displayName||((user.email||'X Trader').split('@')[0]),ph:'',email:user.email||'',accountType:'firebase'}));LS.s('xk_sess','1');if(document.getElementById('login')&&!document.getElementById('login').classList.contains('hide'))enter();}else fbStatus('Not signed in to Firebase');});fbAuth.getRedirectResult().catch(e=>{console.warn('Google redirect:',e);fbStatus('Google sign-in: '+friendlyFbError(e));});
-  }catch(e){console.error('Firebase init:',e);fbStatus('Firebase setup error: '+e.message)}
-}
-async function firebaseEmailAuth(){
-  if(!fbReady)return toast('Add your Fireba
+    fbAuth.onAuthSta
